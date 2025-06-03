@@ -469,6 +469,11 @@
                     <label for="record-without-pause">Record without pausing playback</label>
                 </div>
 
+                <button id="toggle-loop-button" class="play-pause-button" title="Toggle Loop Playback">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 17H7a4 4 0 01-4-4V7a4 4 0 014-4h10a4 4 0 014 4v6a4 4 0 01-4 4zm0 0l-3 3m3-3l3 3"/></svg>
+                    Loop Off
+                </button>
+
                 <button id="switch-to-uploaded-audio" class="play-pause-button">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13M9 18a3 3 0 100-6 3 3 0 000 6zM21 17v5l-12-2v-9M21 17a3 3 0 100-6 3 3 0 000 6z"/></svg>
                     Use Uploaded
@@ -480,8 +485,8 @@
                 
                 <select id="recorded-audio-download-format" style="width: auto; flex-shrink: 0; display: none;">
                     <option value="webm">WebM (Default)</option>
-                    <option value="wav">WAV (Not Supported)</option>
-                    <option value="mp3">MP3 (Not Supported)</option>
+                    <option value="wav">WAV</option>
+                    <option value="mp3">MP3</option>
                 </select>
 
                 <a id="download-active-audio-link" href="#" download="audio.webm" class="download-link" style="display: none;">
@@ -662,6 +667,10 @@
         const generateHashtagsButton = document.getElementById('generate-hashtags-button');
         const hashtagsLoadingSpinner = document.getElementById('hashtags-loading-spinner');
 
+        // Loop button
+        const toggleLoopButton = document.getElementById('toggle-loop-button');
+        toggleLoopButton.style.backgroundColor ='#f44336'; // Green for loop on, red for loop off
+
 
         // MediaRecorder variables
         let mediaRecorder;
@@ -759,7 +768,7 @@
 
         // Helper function to draw the actual waveform visuals
         const drawWaveformVisuals = (ctx, width, height, analyserNode, style, color, text) => {
-            const bufferLength = analyserNode.frequencyBinCount; // Corrected from frequencyBinBinCount
+            const bufferLength = analyserNode.frequencyBinCount; 
             const dataArray = new Uint8Array(bufferLength);
             analyserNode.getByteFrequencyData(dataArray);
 
@@ -878,10 +887,13 @@
                 activeAudioElement.playbackRate = playbackSpeed;
 
                 activeAudioElement.onended = () => {
-                    isPlaying = false;
-                    playIcon.style.display = 'inline';
-                    pauseIcon.style.display = 'none';
-                    recordingStatusSpan.textContent = '';
+                    // If loop is on, it will automatically restart, so no need to change isPlaying state
+                    if (!activeAudioElement.loop) {
+                        isPlaying = false;
+                        playIcon.style.display = 'inline';
+                        pauseIcon.style.display = 'none';
+                        recordingStatusSpan.textContent = '';
+                    }
                 };
             }
         };
@@ -916,6 +928,12 @@
                 audioContext = null;
             }
             updateCanvasDisplay(); // Clear canvas
+            // Reset loop button state
+            //toggleLoopButton.style.backgroundColor = !activeAudioElement.loop ? '#f44336' : '#4CAF50'; // Green for loop on, red for loop off
+            toggleLoopButton.textContent = 'Loop Off'; 
+            if (activeAudioElement) {
+                activeAudioElement.loop = false; // Reset loop state to true for the active audio element
+            }
         };
 
         // Function to set up Web Audio API for a given audio element
@@ -981,7 +999,7 @@
             recordedAudioFileBlob = blob; // Store the blob for video generation
             audioFile = recordedAudioFileBlob; // Set the audioFile for video generation
 
-            // Clean up previous dynamically created recorded audio element if it exists
+            // Clean up previous dynamically created recorded audio element if it's exists
             if (currentRecordedAudioElement) {
                 currentRecordedAudioElement.pause();
                 URL.revokeObjectURL(currentRecordedAudioElement.src); // Revoke its object URL
@@ -1007,12 +1025,12 @@
             audioFileNameSpan.textContent = 'Recorded Audio';
 
             // Update the general download link for the active audio
-            downloadActiveAudioLink.href = currentRecordedAudioElement.src;
-            downloadActiveAudioLink.download = 'recorded_audio.webm'; // Always webm for recorded audio
+            // The actual download format will be determined by the backend based on user selection
+            downloadActiveAudioLink.href = currentRecordedAudioElement.src; 
+            downloadActiveAudioLink.download = `recorded_audio.${recordedAudioDownloadFormatSelect.value}`; // Use selected format for filename
             downloadActiveAudioLink.style.display = 'inline-flex';
             recordedAudioDownloadFormatSelect.style.display = 'inline-block'; // Show for recorded audio
-            messageElement.textContent = 'Note: Recorded audio is saved as WebM. WAV/MP3 conversion is not supported client-side.'; // Inform user
-            messageElement.style.color = '#fca5a5'; // Red color for warning
+            messageElement.textContent = ''; // Clear previous warning
 
             updateCanvasDisplay();
         };
@@ -1225,6 +1243,17 @@
             }
         });
 
+        // Loop button logic
+        toggleLoopButton.addEventListener('click', () => {
+            if (!activeAudioElement) {
+                showErrorAlert('No audio loaded to loop.');
+                return;
+            }
+            activeAudioElement.loop = !activeAudioElement.loop;
+            toggleLoopButton.style.backgroundColor = activeAudioElement.loop ? '#61fd2d' : '#f44336'; // Green for loop on, red for loop off
+            toggleLoopButton.textContent = activeAudioElement.loop ? 'Loop On' : 'Loop Off';
+        });
+
         // Switch audio source buttons
         switchToUploadedAudioButton.addEventListener('click', () => {
             if (uploadedAudioFileBlob) {
@@ -1244,12 +1273,12 @@
 
         // Event listener for recorded audio download format selection
         recordedAudioDownloadFormatSelect.addEventListener('change', (event) => {
-            if (event.target.value !== 'webm') {
-                messageElement.textContent = 'Warning: Client-side conversion to WAV or MP3 is not supported. The recorded audio will be downloaded as WebM.';
-                messageElement.style.color = '#fca5a5'; // Red color for warning
-            } else {
-                messageElement.textContent = ''; // Clear warning
+            // Update the download link's filename based on the selected format
+            if (activeAudioElement && activeAudioElement === currentRecordedAudioElement) {
+                downloadActiveAudioLink.download = `recorded_audio.${event.target.value}`;
             }
+            // No warning message needed here as backend handles conversion
+            messageElement.textContent = ''; 
         });
 
 
@@ -1344,6 +1373,16 @@
             formData.append('backgroundOpacity', backgroundOpacity);
             formData.append('playbackSpeed', playbackSpeed); // Send playback speed to backend
 
+            // Append download format for recorded audio
+            // This now dictates the audio encoding format within the final MP4 video
+            if (activeAudioElement === currentRecordedAudioElement) {
+                formData.append('downloadFormat', recordedAudioDownloadFormatSelect.value);
+            } else {
+                // For uploaded audio, default to 'mp3' or a suitable format for video embedding
+                // The backend will handle the actual audio encoding within the MP4.
+                formData.append('downloadFormat', 'mp3'); 
+            }
+
             // Append background image if selected
             const selectedBackgroundImageFile = backgroundImageInput.files[0];
             if (selectedBackgroundImageFile) {
@@ -1355,40 +1394,39 @@
             formData.append('textOverlay', textOverlay);
 
             try {
-                // Simulate initial progress quickly
                 progressBarFill.style.width = '20%';
                 generationMessage.textContent = 'Sending data to server...';
 
-                const response = await fetch('https://192.168.1.252:8443/api/v2/podcast/generate', {
-                    mode: 'cors',
-                    //credentials: 'include', // Include cookies for session management
+                // Use the backend URL for the API call
+                const response = await fetch('https://192.168.1.252:8443/api/v2/podcast/generate', { // Use http://127.0.0.1:5000 for local Flask
                     method: 'POST',
                     body: formData,
+                    mode: 'cors',
+                    //credentials: 'include', // Include cookies for session management
                     // No 'Content-Type' header needed for FormData; browser sets it automatically
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({ message: 'Unknown server error' }));
+                    const errorData = await response.json().catch(() => ({}));
                     throw new Error(`Server error: ${response.status} - ${errorData.message || response.statusText}`);
                 }
 
-                // Simulate further progress
                 progressBarFill.style.width = '70%';
                 generationMessage.textContent = 'Processing video on server...';
 
                 const result = await response.json(); // Assuming backend returns JSON with video_url
 
-                // Simulate final progress
                 progressBarFill.style.width = '100%';
                 generationMessage.textContent = 'Video generation complete!';
+                
                 console.log('Video generation result:');
                 console.log(result);
+
                 if (result && result.video_url) {
-                    alert(result.message)
-                    alert(result.video_url)
-                    downloadLink.href = result.video_url;
-                    // Dynamically set extension based on URL, default to mp4
-                    downloadLink.download = `your_waveform_video.${result.video_url.split('.').pop() || 'mp4'}`;
+                    // Update download link to point to the backend's download endpoint
+                    downloadLink.href = `https://192.168.1.252:8443/${result.video_url}`;
+                    // The backend always outputs MP4 video, so set download filename accordingly
+                    downloadLink.download = 'your_waveform_video.mp4'; 
                     downloadSection.style.display = 'block';
                     generationMessage.textContent = 'Video generated successfully! Click the link below to download.';
                 } else {
@@ -1415,9 +1453,6 @@
 
         // Initial setup on page load
         document.addEventListener('DOMContentLoaded', () => {
-            // No audio is active on initial load. User must upload or record.
-            // The audioPlayer element is just a placeholder in the HTML.
-            // activeAudioElement will be set when loadUploadedAudio or loadRecordedAudio is called.
             updateCanvasDisplay(); // Initial draw of the canvas with default settings
             recordedAudioDownloadFormatSelect.style.display = 'none'; // Hide by default on load
         });

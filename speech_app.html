@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text to Audio Converter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            max-width: 700px;
+            width: 100%;
+        }
+        h1 {
+            color: #343a40;
+            margin-bottom: 30px;
+            text-align: center;
+            font-weight: 600;
+        }
+        textarea {
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 1.1rem;
+            min-height: 150px;
+            resize: vertical;
+            border: 1px solid #ced4da;
+        }
+        .form-select {
+            border-radius: 10px;
+            padding: 10px 15px;
+            font-size: 1rem;
+            border: 1px solid #ced4da;
+        }
+        .btn { /* General button styling for consistent padding */
+            border-radius: 10px;
+            padding: 8px 12px; /* Reduced padding */
+            font-size: 0.95rem; /* Reduced font size */
+            font-weight: 500;
+            transition: background-color 0.3s ease, border-color 0.3s ease, transform 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn i { /* Spacing for icons */
+            margin-right: 6px; /* Adjusted margin for smaller buttons */
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+            border-color: #0056b3;
+            transform: translateY(-2px);
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            border-color: #6c757d;
+        }
+        .btn-secondary:hover {
+            background-color: #5a6268;
+            border-color: #5a6268;
+            transform: translateY(-2px);
+        }
+        .audio-player-container {
+            margin-top: 30px;
+            text-align: center;
+        }
+        #audioPlayer {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            display: block;
+        }
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+            margin-top: 20px;
+            color: #007bff;
+        }
+        .message-box {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 1rem;
+        }
+        .message-box.alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border-color: #c3e6cb;
+        }
+        .message-box.alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border-color: #f5c6cb;
+        }
+        /* Custom styles for new LLM buttons */
+        .btn-llm {
+            background-color: #28a745; /* Green color */
+            border-color: #28a745;
+            color: white;
+        }
+        .btn-llm:hover {
+            background-color: #218838;
+            border-color: #1e7e34;
+            transform: translateY(-2px);
+        }
+        .btn-llm.btn-info { /* For correction button */
+            background-color: #17a2b8; /* Info blue */
+            border-color: #17a2b8;
+        }
+        .btn-llm.btn-info:hover {
+            background-color: #138496;
+            border-color: #117a8b;
+        }
+        .btn-llm.btn-warning { /* For emphasis button */
+            background-color: #ffc107; /* Warning yellow */
+            border-color: #ffc107;
+            color: #343a40; /* Dark text for contrast */
+        }
+        .btn-llm.btn-warning:hover {
+            background-color: #e0a800;
+            border-color: #d39e00;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Text to Audio Converter</h1>
+
+        <div class="mb-3">
+            <label for="textInput" class="form-label">Enter Text:</label>
+            <textarea class="form-control" id="textInput" rows="5" placeholder="Type your text here..."></textarea>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-sm-6 col-md-4">
+                <label for="languageSelect" class="form-label">Select Language:</label>
+                <select class="form-select" id="languageSelect">
+                    <option value="pt-PT" selected>Portuguese (Portugal)</option>
+                    <option value="pt-BR">Portuguese (Brazilian)</option>
+                    <option value="en-US">English (US)</option>
+                    <option value="es-ES">Spanish (Spain)</option>
+                    <option value="fr-FR">French (France)</option>
+                    <option value="de-DE">German (Germany)</option>
+                </select>
+            </div>
+            <div class="col-12 col-sm-6 col-md-4" id="accentSelectContainer">
+                <label for="accentSelect" class="form-label">Select Accent:</label>
+                <select class="form-select" id="accentSelect">
+                    <option value="pt-PT" selected>Portugal</option>
+                    <option value="pt-BR">Brazilian</option>
+                </select>
+            </div>
+            <div class="col-12 col-sm-6 col-md-4">
+                <label for="genderSelect" class="form-label">Select Gender:</label>
+                <select class="form-select" id="genderSelect">
+                    <option value="default" selected>Default</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="d-grid gap-2 d-md-flex justify-content-md-center mb-4">
+            <button class="btn btn-primary" id="convertBtn" type="button"><i class="fas fa-volume-up"></i> Convert</button>
+            <button class="btn btn-llm" id="summarizeBtn" type="button"><i class="fas fa-compress-alt"></i> Summarize</button>
+            <button class="btn btn-llm btn-info" id="correctBtn" type="button"><i class="fas fa-spell-check"></i> Correct</button>
+            <button class="btn btn-llm" id="removeStopWordsBtn" type="button"><i class="fas fa-filter"></i> Remove Stop Words</button>
+            <button class="btn btn-llm btn-warning" id="emphasizeBtn" type="button"><i class="fas fa-highlighter"></i> Emphasize Words</button>
+            <button class="btn btn-secondary" id="clearBtn" type="button"><i class="fas fa-redo-alt"></i> Clear</button>
+        </div>
+
+        <div id="messageBox" class="message-box d-none"></div>
+
+        <div class="d-flex justify-content-center">
+            <div id="loadingSpinner" class="spinner-border d-none" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+
+        <div class="audio-player-container">
+            <label for="audioPlayer" class="form-label">Generated Audio (Simulated):</label>
+            <audio id="audioPlayer" controls></audio>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Get DOM elements
+        const textInput = document.getElementById('textInput');
+        const languageSelect = document.getElementById('languageSelect');
+        const accentSelectContainer = document.getElementById('accentSelectContainer');
+        const accentSelect = document.getElementById('accentSelect');
+        const genderSelect = document.getElementById('genderSelect');
+        const convertBtn = document.getElementById('convertBtn');
+        const summarizeBtn = document.getElementById('summarizeBtn');
+        const correctBtn = document.getElementById('correctBtn');
+        const removeStopWordsBtn = document.getElementById('removeStopWordsBtn');
+        const emphasizeBtn = document.getElementById('emphasizeBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const messageBox = document.getElementById('messageBox');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+
+        // API Key (empty string as per instructions, Canvas will provide at runtime)
+        const apiKey = "";
+
+        /**
+         * Updates the visibility of the accent selection dropdown based on the selected language.
+         * The accent dropdown is only visible when Portuguese (pt-PT or pt-BR) is selected.
+         */
+        function updateAccentDropdown() {
+            const selectedLanguage = languageSelect.value;
+            if (selectedLanguage.startsWith('pt')) {
+                accentSelectContainer.classList.remove('d-none');
+                // Set accent dropdown value to match language selection if it's Portuguese
+                accentSelect.value = selectedLanguage;
+            } else {
+                accentSelectContainer.classList.add('d-none');
+            }
+        }
+
+        /**
+         * Displays a message in the message box.
+         * @param {string} message - The message to display.
+         * @param {string} type - The type of message ('success' or 'danger').
+         */
+        function showMessage(message, type) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('d-none', 'alert-success', 'alert-danger');
+            messageBox.classList.add(`alert-${type}`);
+        }
+
+        /**
+         * Hides the message box.
+         */
+        function hideMessage() {
+            messageBox.classList.add('d-none');
+        }
+
+        /**
+         * Disables all interactive buttons and shows the loading spinner.
+         */
+        function disableControls() {
+            convertBtn.disabled = true;
+            summarizeBtn.disabled = true;
+            correctBtn.disabled = true;
+            removeStopWordsBtn.disabled = true;
+            emphasizeBtn.disabled = true;
+            clearBtn.disabled = true;
+            loadingSpinner.classList.remove('d-none');
+            hideMessage();
+        }
+
+        /**
+         * Enables all interactive buttons and hides the loading spinner.
+         */
+        function enableControls() {
+            convertBtn.disabled = false;
+            summarizeBtn.disabled = false;
+            correctBtn.disabled = false;
+            removeStopWordsBtn.disabled = false;
+            emphasizeBtn.disabled = false;
+            clearBtn.disabled = false;
+            loadingSpinner.classList.add('d-none');
+        }
+
+        /**
+         * Makes a call to the Gemini API with a given prompt.
+         * @param {string} prompt - The prompt to send to the Gemini model.
+         * @returns {Promise<string>} - A promise that resolves with the model's response text.
+         */
+        async function callGeminiAPI(prompt) {
+            const chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
+            const payload = { contents: chatHistory };
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                return result.candidates[0].content.parts[0].text;
+            } else {
+                throw new Error('Failed to get a response from the Gemini model.');
+            }
+        }
+
+        /**
+         * Converts the input text to simulated audio using the Gemini API and sends a request to the backend.
+         */
+        async function convertTextToSpeech() {
+            const text = textInput.value.trim();
+            if (!text) {
+                showMessage('Please enter some text to convert.', 'danger');
+                return;
+            }
+
+            // Determine the final language code to use in the prompt
+            let selectedLanguage = languageSelect.value;
+            let accent = '';
+            if (selectedLanguage.startsWith('pt')) {
+                accent = accentSelect.value === 'pt-PT' ? 'Portugal' : 'Brazilian';
+                selectedLanguage = selectedLanguage === 'pt-PT' ? 'Portuguese (Portugal)' : 'Portuguese (Brazilian)';
+            } else if (selectedLanguage === 'en-US') {
+                selectedLanguage = 'English (US)';
+            } else if (selectedLanguage === 'es-ES') {
+                selectedLanguage = 'Spanish (Spain)';
+            } else if (selectedLanguage === 'fr-FR') {
+                selectedLanguage = 'French (France)';
+            } else if (selectedLanguage === 'de-DE') {
+                selectedLanguage = 'German (Germany)';
+            }
+
+            const selectedGender = genderSelect.value;
+
+            disableControls(); // Disable controls during processing
+            audioPlayer.removeAttribute('src'); // Clear previous audio
+
+            try {
+                // --- Part 1: Simulate audio description using Gemini API ---
+                let prompt = `Simulate text-to-speech for the following text. Describe how the audio would sound, including the voice's characteristics (e.g., tone, pace), the pronunciation, and explicitly mention if it's a male or female voice. Words enclosed in double asterisks (e.g., **word**) should be described with emphasis.
+
+                Text: "${text}"
+                Language: ${selectedLanguage}`;
+
+                if (accent) {
+                    prompt += `
+                Accent: ${accent}`;
+                }
+                if (selectedGender !== 'default') {
+                    prompt += `
+                Voice Gender: ${selectedGender}`;
+                }
+
+                const simulatedDescription = await callGeminiAPI(prompt);
+                showMessage(`Simulated Audio Description: ${simulatedDescription}\n\n(Actual audio generation is not supported in this environment.)`, 'success');
+
+                // --- Part 2: Send request to backend for actual audio generation ---
+                const backendPayload = {
+                    text: text,
+                    language: languageSelect.value, // Send raw language code to backend
+                    accent: accentSelect.value,     // Send raw accent code to backend
+                    gender: selectedGender
+                };
+
+                const backendResponse = await fetch('http://localhost:5000/generate_audio', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(backendPayload)
+                });
+
+                if (!backendResponse.ok) {
+                    const errorData = await backendResponse.json();
+                    throw new Error(`Backend error: ${errorData.message || backendResponse.statusText}`);
+                }
+
+                // Assuming backend returns a JSON with an audio URL or base64 data
+                const backendResult = await backendResponse.json();
+
+                if (backendResult.audioUrl) {
+                    audioPlayer.src = backendResult.audioUrl;
+                    audioPlayer.play();
+                    console.log('Audio URL received from backend:', backendResult.audioUrl);
+                } else if (backendResult.audioBase64) {
+                    audioPlayer.src = `data:audio/mp3;base64,${backendResult.audioBase64}`; // Adjust mime type if needed
+                    audioPlayer.play();
+                    console.log('Base64 audio received from backend (first 50 chars):', backendResult.audioBase64.substring(0, 50) + '...');
+                } else {
+                    console.warn('Backend response did not contain audioUrl or audioBase64.');
+                }
+
+            } catch (error) {
+                showMessage(`An error occurred during conversion or backend communication: ${error.message}`, 'danger');
+                console.error('Error in convertTextToSpeech:', error);
+            } finally {
+                enableControls(); // Re-enable controls
+            }
+        }
+
+        /**
+         * Summarizes the text in the input field using the Gemini API.
+         */
+        async function summarizeText() {
+            const text = textInput.value.trim();
+            if (!text) {
+                showMessage('Please enter some text to summarize.', 'danger');
+                return;
+            }
+
+            disableControls(); // Disable controls during processing
+
+            try {
+                const prompt = `Summarize the following text concisely:
+                "${text}"`;
+                const summarizedText = await callGeminiAPI(prompt);
+                textInput.value = summarizedText;
+                showMessage('Text summarized successfully!', 'success');
+            } catch (error) {
+                showMessage(`An error occurred during summarization: ${error.message}`, 'danger');
+                console.error('Error summarizing text:', error);
+            } finally {
+                enableControls(); // Re-enable controls
+            }
+        }
+
+        /**
+         * Corrects grammar and spelling in the input text using the Gemini API.
+         */
+        async function correctText() {
+            const text = textInput.value.trim();
+            if (!text) {
+                showMessage('Please enter some text to correct.', 'danger');
+                return;
+            }
+
+            disableControls(); // Disable controls during processing
+
+            try {
+                const prompt = `Correct any grammar and spelling errors in the following text. Only return the corrected text:
+                "${text}"`;
+                const correctedText = await callGeminiAPI(prompt);
+                textInput.value = correctedText;
+                showMessage('Grammar and spelling corrected successfully!', 'success');
+            } catch (error) {
+                showMessage(`An error occurred during correction: ${error.message}`, 'danger');
+                console.error('Error correcting text:', error);
+            } finally {
+                enableControls(); // Re-enable controls
+            }
+        }
+
+        /**
+         * Removes common stop words from the text in the input field using the Gemini API.
+         */
+        async function removeStopWords() {
+            const text = textInput.value.trim();
+            if (!text) {
+                showMessage('Please enter some text to remove stop words from.', 'danger');
+                return;
+            }
+
+            disableControls();
+
+            try {
+                const prompt = `Remove common stop words from the following text. Return only the text with stop words removed:
+                "${text}"`;
+                const processedText = await callGeminiAPI(prompt);
+                textInput.value = processedText;
+                showMessage('Stop words removed successfully!', 'success');
+            } catch (error) {
+                showMessage(`An error occurred during stop word removal: ${error.message}`, 'danger');
+                console.error('Error removing stop words:', error);
+            } finally {
+                enableControls();
+            }
+        }
+
+        /**
+         * Prompts the user for words to emphasize and bolds them in the text input.
+         */
+        async function emphasizeWords() {
+            let text = textInput.value.trim();
+            if (!text) {
+                showMessage('Please enter some text to emphasize words in.', 'danger');
+                return;
+            }
+
+            const wordsToEmphasizeInput = prompt("Enter words to emphasize, separated by commas (e.g., important, key, highlight):");
+
+            if (wordsToEmphasizeInput === null || wordsToEmphasizeInput.trim() === '') {
+                showMessage('No words entered for emphasis.', 'info');
+                return;
+            }
+
+            const words = wordsToEmphasizeInput.split(',').map(word => word.trim()).filter(word => word !== '');
+
+            if (words.length === 0) {
+                showMessage('No valid words entered for emphasis.', 'info');
+                return;
+            }
+
+            disableControls(); // Disable controls temporarily for UI update
+
+            try {
+                let modifiedText = text;
+                words.forEach(word => {
+                    // Use a regular expression to replace all occurrences, case-insensitively
+                    const regex = new RegExp(`\\b(${word})\\b`, 'gi');
+                    modifiedText = modifiedText.replace(regex, '**$1**');
+                });
+                textInput.value = modifiedText;
+                showMessage('Words emphasized successfully! (Look for **bolded** words)', 'success');
+            } catch (error) {
+                showMessage(`An error occurred while emphasizing words: ${error.message}`, 'danger');
+                console.error('Error emphasizing words:', error);
+            } finally {
+                enableControls(); // Re-enable controls
+            }
+        }
+
+        /**
+         * Clears the text input, audio player, and message box.
+         */
+        function clearInput() {
+            textInput.value = '';
+            audioPlayer.removeAttribute('src');
+            hideMessage();
+            audioPlayer.load(); // Reset audio player
+        }
+
+        // Event Listeners
+        languageSelect.addEventListener('change', updateAccentDropdown);
+        convertBtn.addEventListener('click', convertTextToSpeech);
+        summarizeBtn.addEventListener('click', summarizeText);
+        correctBtn.addEventListener('click', correctText);
+        removeStopWordsBtn.addEventListener('click', removeStopWords);
+        emphasizeBtn.addEventListener('click', emphasizeWords);
+        clearBtn.addEventListener('click', clearInput);
+
+        // Initial call to set up the accent dropdown visibility on page load
+        document.addEventListener('DOMContentLoaded', updateAccentDropdown);
+    </script>
+</body>
+</html>

@@ -470,8 +470,8 @@
                 </div>
 
                 <button id="toggle-loop-button" class="play-pause-button" title="Toggle Loop Playback">
-                    <svg id="loop-off-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 17H7a4 4 0 01-4-4V7a4 4 0 014-4h10a4 4 0 014 4v6a4 4 0 01-4 4zm0 0l-3 3m3-3l3 3"/></svg>
-                    <svg id="loop-on-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style="display: none;"><path d="M17 17H7a4 4 0 01-4-4V7a4 4 0 014-4h10a4 4 0 014 4v6a4 4 0 01-4 4z"></path></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 17H7a4 4 0 01-4-4V7a4 4 0 014-4h10a4 4 0 014 4v6a4 4 0 01-4 4zm0 0l-3 3m3-3l3 3"/></svg>
+                    Loop Off
                 </button>
 
                 <button id="switch-to-uploaded-audio" class="play-pause-button">
@@ -669,10 +669,7 @@
 
         // Loop button
         const toggleLoopButton = document.getElementById('toggle-loop-button');
-        toggleLoopButton.style.backgroundColor = '#cf3333'; // Set initial background color for loop button
-        toggleLoopButton.style.color = '#ffffff'; // Set initial text color for loop button
-        const loopOffIcon = document.getElementById('loop-off-icon');
-        const loopOnIcon = document.getElementById('loop-on-icon');
+        toggleLoopButton.style.backgroundColor ='#f44336'; // Green for loop on, red for loop off
 
 
         // MediaRecorder variables
@@ -932,11 +929,11 @@
             }
             updateCanvasDisplay(); // Clear canvas
             // Reset loop button state
+            //toggleLoopButton.style.backgroundColor = !activeAudioElement.loop ? '#f44336' : '#4CAF50'; // Green for loop on, red for loop off
+            toggleLoopButton.textContent = 'Loop Off'; 
             if (activeAudioElement) {
-                activeAudioElement.loop = false;
+                activeAudioElement.loop = false; // Reset loop state to true for the active audio element
             }
-            loopOnIcon.style.display = 'none';
-            loopOffIcon.style.display = 'inline';
         };
 
         // Function to set up Web Audio API for a given audio element
@@ -1253,17 +1250,8 @@
                 return;
             }
             activeAudioElement.loop = !activeAudioElement.loop;
-            if (activeAudioElement.loop) {
-                toggleLoopButton.style.backgroundColor = '#61fd2d'; // Change background color when loop is on
-                toggleLoopButton.style.color = '#000000'; // Change text color when loop is on
-                loopOnIcon.style.display = 'inline';
-                loopOffIcon.style.display = 'none';
-            } else {
-                loopOnIcon.style.display = 'none';
-                loopOffIcon.style.display = 'inline';
-                toggleLoopButton.style.backgroundColor = '#cf3333'; // Reset background color when loop is off
-                toggleLoopButton.style.color = '#ffffff'; // Reset text color when loop is off
-            }
+            toggleLoopButton.style.backgroundColor = activeAudioElement.loop ? '#61fd2d' : '#f44336'; // Green for loop on, red for loop off
+            toggleLoopButton.textContent = activeAudioElement.loop ? 'Loop On' : 'Loop Off';
         });
 
         // Switch audio source buttons
@@ -1340,8 +1328,7 @@
             }
         };
 
-        // Specific AI functions
-        const generatePodcastDescription = () => {
+        generateDescriptionButton.addEventListener('click', () => {
             const title = textOverlayInput.value.trim();
             if (!title) {
                 showErrorAlert('Please enter a title in "Text/Branding" section to generate a description.');
@@ -1349,9 +1336,9 @@
             }
             const prompt = `Generate a short, engaging podcast description (around 50-100 words) based on the title: "${title}". Focus on what the podcast might be about and why someone would listen.`;
             callGeminiAPI(prompt, descriptionLoadingSpinner, podcastDescriptionTextarea);
-        };
+        });
 
-        const generateSuggestedHashtags = () => {
+        generateHashtagsButton.addEventListener('click', () => {
             const description = podcastDescriptionTextarea.value.trim();
             if (!description) {
                 showErrorAlert('Please generate a podcast description first to get hashtags.');
@@ -1359,16 +1346,11 @@
             }
             const prompt = `Generate 10 relevant and popular hashtags for a podcast with the following description: "${description}". Provide them as a comma-separated list, without any introductory text.`;
             callGeminiAPI(prompt, hashtagsLoadingSpinner, suggestedHashtagsTextarea);
-        };
-
-
-        generateDescriptionButton.addEventListener('click', generatePodcastDescription);
-        generateHashtagsButton.addEventListener('click', generateSuggestedHashtags);
+        });
 
 
         generateVideoButton.addEventListener('click', async () => {
-            // Check if at least one audio source is available
-            if (!uploadedAudioFileBlob && !recordedAudioFileBlob) {
+            if (!audioFile) {
                 showErrorAlert('Please select an audio file or record one first.');
                 return;
             }
@@ -1382,16 +1364,7 @@
             messageElement.textContent = ''; // Clear general message
 
             const formData = new FormData();
-            
-            // Append uploaded audio if it exists
-            if (uploadedAudioFileBlob) {
-                formData.append('uploadedAudio', uploadedAudioFileBlob, uploadedAudioFileBlob.name || 'uploaded_audio.webm');
-            }
-
-            // Append recorded audio if it exists
-            if (recordedAudioFileBlob) {
-                formData.append('recordedAudio', recordedAudioFileBlob, 'recorded_audio.webm'); // Use a generic name for recorded audio
-            }
+            formData.append('audio', audioFile); // 'audio' is the field name for the audio file
 
             // Append other parameters
             formData.append('waveformStyle', waveformStyle);
@@ -1402,11 +1375,11 @@
 
             // Append download format for recorded audio
             // This now dictates the audio encoding format within the final MP4 video
-            // If both are sent, the backend will need logic to decide which audio to use or how to combine them.
-            // For now, we'll send the format based on which was active, but the backend will decide.
             if (activeAudioElement === currentRecordedAudioElement) {
                 formData.append('downloadFormat', recordedAudioDownloadFormatSelect.value);
             } else {
+                // For uploaded audio, default to 'mp3' or a suitable format for video embedding
+                // The backend will handle the actual audio encoding within the MP4.
                 formData.append('downloadFormat', 'mp3'); 
             }
 
@@ -1425,9 +1398,11 @@
                 generationMessage.textContent = 'Sending data to server...';
 
                 // Use the backend URL for the API call
-                const response = await fetch('https://192.168.1252:8443/api/v2/podcast/generate', { // Use http://127.0.0.1:5000 for local Flask
+                const response = await fetch('https://192.168.1.252:8443/api/v2/podcast/generate', { // Use http://127.0.0.1:5000 for local Flask
                     method: 'POST',
                     body: formData,
+                    mode: 'cors',
+                    //credentials: 'include', // Include cookies for session management
                     // No 'Content-Type' header needed for FormData; browser sets it automatically
                 });
 
@@ -1443,10 +1418,13 @@
 
                 progressBarFill.style.width = '100%';
                 generationMessage.textContent = 'Video generation complete!';
+                
+                console.log('Video generation result:');
+                console.log(result);
 
                 if (result && result.video_url) {
                     // Update download link to point to the backend's download endpoint
-                    downloadLink.href = `https://192.168.1252:8443${result.video_url}`;
+                    downloadLink.href = `https://192.168.1.252:8443/${result.video_url}`;
                     // The backend always outputs MP4 video, so set download filename accordingly
                     downloadLink.download = 'your_waveform_video.mp4'; 
                     downloadSection.style.display = 'block';

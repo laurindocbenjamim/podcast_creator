@@ -13,6 +13,7 @@ from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 import logging
 import numpy as np
 from PIL import Image, ImageDraw
+import shutil # For cleaning up temp directories
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,6 +32,10 @@ ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['GENERATED_FILES_FOLDER'] = GENERATED_FILES_FOLDER
 app.config['TEMP_FRAMES_FOLDER'] = TEMP_FRAMES_FOLDER
+
+# Define a constant for background audio volume (in dB)
+# A negative value means quieter. -10 dB is a good starting point for background music under speech.
+BACKGROUND_AUDIO_VOLUME_DB = -10
 
 # Create necessary directories if they don't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -76,6 +81,8 @@ def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, v
             # Simple mono conversion: average channels
             audio_data = audio_data.reshape((-1, audio.channels)).mean(axis=1)
 
+        # Calculate total samples and samples per frame
+        total_samples = len(audio_data)
         samples_per_frame = int(audio.frame_rate / fps)
         num_frames = int(video_duration * fps)
 
@@ -84,27 +91,26 @@ def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, v
             start_sample = i * samples_per_frame
             end_sample = start_sample + samples_per_frame
             
-            # Ensure we don't go out of bounds
-            if start_sample >= len(audio_data):
-                break
-            
-            frame_audio_data = audio_data[start_sample:end_sample]
+            # Ensure we don't go out of bounds for the current frame's audio data
+            current_frame_audio_data = audio_data[start_sample:min(end_sample, total_samples)]
             
             # Create a blank image for the frame
             img = Image.new('RGBA', (video_width, video_height), (0, 0, 0, 0)) # Transparent background
             draw = ImageDraw.Draw(img)
 
             # Draw waveform based on style
-            if len(frame_audio_data) > 0:
-                max_amplitude = np.max(np.abs(audio_data)) # Use global max for consistent scaling
-                if max_amplitude == 0: max_amplitude = 1 # Avoid division by zero
+            if len(current_frame_audio_data) > 0:
+                # Use global max amplitude for consistent scaling across all frames
+                # This prevents "jumping" in waveform size if a frame has very low local amplitude
+                global_max_amplitude = np.max(np.abs(audio_data))
+                if global_max_amplitude == 0: global_max_amplitude = 1 # Avoid division by zero
 
-                # Normalize amplitude to canvas height
-                normalized_amplitudes = (np.abs(frame_audio_data) / max_amplitude) * (video_height / 2)
+                # Normalize amplitude to canvas height based on global max
+                normalized_amplitudes = (np.abs(current_frame_audio_data) / global_max_amplitude) * (video_height / 2)
 
                 if waveform_style == 'bars' or waveform_style == 'frequency-bars':
                     bar_width = max(1, video_width // 100) # Adjust bar width dynamically
-                    num_bars = video_width // bar_width
+                    num_bars = video_width // num_bars
                     step = max(1, len(normalized_amplitudes) // num_bars)
                     
                     for j in range(num_bars):
@@ -116,23 +122,33 @@ def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, v
                                            fill=waveform_color_rgb)
                 elif waveform_style == 'lines' or waveform_style == 'smooth-lines':
                     points = []
+                    # Draw both top and bottom halves for a centered line waveform
                     for j, amp in enumerate(normalized_amplitudes):
                         x = (j / len(normalized_amplitudes)) * video_width
-                        y = video_height / 2 - amp # Draw from center
-                        points.append((x, y))
-                        
+                        y_top = video_height / 2 - amp 
+                        y_bottom = video_height / 2 + amp
+                        points.append((x, y_top))
+                        # For a continuous line, we might need to add points for the bottom half as well
+                        # Or draw two separate lines for top and bottom. Let's simplify for now.
+                    
+                    # For a single line, connect the top points. For a filled area, need more complex path.
+                    # For simplicity, drawing a single line based on positive amplitudes centered.
+                    line_points = []
+                    for j, amp in enumerate(normalized_amplitudes):
                         x = (j / len(normalized_amplitudes)) * video_width
-                        y = video_height / 2 + amp # Draw from center
-                        points.append((x, y))
+                        y = video_height / 2 - amp # Draw from center, upwards for positive
+                        line_points.append((x, y))
 
-                    if len(points) > 1:
-                        draw.line(points, fill=waveform_color_rgb, width=2)
+                    if len(line_points) > 1:
+                        draw.line(line_points, fill=waveform_color_rgb, width=2)
                 elif waveform_style == 'circles':
                     # Simplified circle: radius based on average amplitude
                     avg_amplitude = np.mean(normalized_amplitudes) if len(normalized_amplitudes) > 0 else 0
                     radius = avg_amplitude * 0.5 # Scale down for aesthetics
                     center_x, center_y = video_width / 2, video_height / 2
                     if radius > 0:
+                        # Ensure radius is not too large
+                        radius = min(radius, min(video_width, video_height) / 2 - 10) 
                         draw.ellipse([center_x - radius, center_y - radius,
                                       center_x + radius, center_y + radius],
                                      outline=waveform_color_rgb, width=2)
@@ -161,118 +177,147 @@ class PodcastGenerate(Resource):
     def post(self):
         logging.info("Received request for podcast generation.")
 
-        # Validate audio file
-        if 'audio' not in request.files:
-            logging.warning("No audio file part in request.")
-            return {'message': 'No audio file provided'}, 400
-        audio_file = request.files['audio']
-        if audio_file.filename == '':
-            logging.warning("No selected audio file.")
-            return {'message': 'No selected audio file'}, 400
-        if not allowed_file(audio_file.filename, ALLOWED_AUDIO_EXTENSIONS):
-            logging.warning(f"Audio file extension not allowed: {audio_file.filename}")
-            return {'message': 'Audio file type not allowed'}, 400
+        uploaded_audio_file = request.files.get('uploadedAudio')
+        recorded_audio_file = request.files.get('recordedAudio')
 
-        # Sanitize and save audio file
-        audio_filename = secure_filename(audio_file.filename)
-        unique_audio_filename = f"{uuid.uuid4()}_{audio_filename}"
-        audio_filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_audio_filename)
+        final_audio_segment = None
+        temp_audio_filepath = None
+
+        uploaded_audio_path = None
+        recorded_audio_path = None
+
         try:
-            audio_file.save(audio_filepath)
-            logging.info(f"Audio file saved to: {audio_filepath}")
-        except Exception as e:
-            logging.error(f"Failed to save audio file: {e}")
-            return {'message': f'Failed to save audio file: {str(e)}'}, 500
+            # --- Handle Uploaded Audio ---
+            if uploaded_audio_file and uploaded_audio_file.filename != '':
+                if not allowed_file(uploaded_audio_file.filename, ALLOWED_AUDIO_EXTENSIONS):
+                    logging.warning(f"Uploaded audio file extension not allowed: {uploaded_audio_file.filename}")
+                    return {'message': 'Uploaded audio file type not allowed'}, 400
+                uploaded_audio_filename = secure_filename(uploaded_audio_file.filename)
+                uploaded_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{uuid.uuid4()}_{uploaded_audio_filename}")
+                uploaded_audio_file.save(uploaded_audio_path)
+                logging.info(f"Uploaded audio file saved to: {uploaded_audio_path}")
+                
+                final_audio_segment = AudioSegment.from_file(uploaded_audio_path)
+                # Apply background volume to the uploaded audio
+                final_audio_segment = final_audio_segment + BACKGROUND_AUDIO_VOLUME_DB 
 
-        # Extract and validate other parameters
-        waveform_style = request.form.get('waveformStyle')
-        waveform_color = request.form.get('waveformColor')
-        background_color_hex = request.form.get('backgroundColor')
-        background_opacity_str = request.form.get('backgroundOpacity')
-        playback_speed_str = request.form.get('playbackSpeed')
-        text_overlay = request.form.get('textOverlay', '')
-        # This download_format is now for the *audio stream within the video*
-        audio_output_format = request.form.get('downloadFormat', 'mp3').lower() 
+            # --- Handle Recorded Audio ---
+            if recorded_audio_file and recorded_audio_file.filename != '':
+                if not allowed_file(recorded_audio_file.filename, ALLOWED_AUDIO_EXTENSIONS):
+                    logging.warning(f"Recorded audio file extension not allowed: {recorded_audio_file.filename}")
+                    return {'message': 'Recorded audio file type not allowed'}, 400
+                recorded_audio_filename = secure_filename(recorded_audio_file.filename)
+                recorded_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{uuid.uuid4()}_{recorded_audio_filename}")
+                recorded_audio_file.save(recorded_audio_path)
+                logging.info(f"Recorded audio file saved to: {recorded_audio_path}")
+                
+                recorded_audio_segment = AudioSegment.from_file(recorded_audio_path)
 
-        # Basic validation for other fields
-        if waveform_style not in ['bars', 'lines', 'circles', 'frequency-bars', 'smooth-lines']:
-            logging.warning(f"Invalid waveform style: {waveform_style}")
-            return {'message': 'Invalid waveform style'}, 400
-        if not validate_color(waveform_color):
-            logging.warning(f"Invalid waveform color: {waveform_color}")
-            return {'message': 'Invalid waveform color format'}, 400
-        if not validate_color(background_color_hex):
-            logging.warning(f"Invalid background color: {background_color_hex}")
-            return {'message': 'Invalid background color format'}, 400
-        if not validate_float_range(background_opacity_str, 0.0, 1.0):
-            logging.warning(f"Invalid background opacity: {background_opacity_str}")
-            return {'message': 'Invalid background opacity value (must be between 0 and 1)'}, 400
-        if not validate_float_range(playback_speed_str, 0.1, 5.0): # Assuming reasonable speed range
-            logging.warning(f"Invalid playback speed: {playback_speed_str}")
-            return {'message': 'Invalid playback speed value'}, 400
-        if audio_output_format not in ['webm', 'wav', 'mp3', 'aac']: # Added aac as a common video audio codec
-            logging.warning(f"Invalid audio output format for video: {audio_output_format}")
-            return {'message': 'Invalid audio output format for video'}, 400
+                if final_audio_segment: # If uploaded audio exists, overlay recorded audio
+                    # Extend background audio if recorded audio is longer
+                    if len(recorded_audio_segment) > len(final_audio_segment):
+                        # Pad final_audio_segment with silence to match recorded audio length
+                        silence = AudioSegment.silent(duration=len(recorded_audio_segment) - len(final_audio_segment))
+                        final_audio_segment += silence
+                    
+                    final_audio_segment = final_audio_segment.overlay(recorded_audio_segment, position=0)
+                else: # Only recorded audio provided
+                    final_audio_segment = recorded_audio_segment
+            
+            if final_audio_segment is None:
+                logging.warning("No audio files provided for video generation.")
+                return {'message': 'No audio files provided'}, 400
 
-        background_opacity = float(background_opacity_str)
-        playback_speed = float(playback_speed_str)
+            # Export the merged/single audio segment to a temporary file for MoviePy
+            temp_audio_filename = f"merged_audio_{uuid.uuid4()}.mp3" # Using MP3 for broader compatibility
+            temp_audio_filepath = os.path.join(app.config['UPLOAD_FOLDER'], temp_audio_filename)
+            final_audio_segment.export(temp_audio_filepath, format="mp3")
+            logging.info(f"Final audio segment exported to: {temp_audio_filepath}")
 
-        # Handle background image
-        background_image_file = request.files.get('backgroundImage')
-        background_image_filepath = None
-        if background_image_file and background_image_file.filename != '':
-            if not allowed_file(background_image_file.filename, ALLOWED_IMAGE_EXTENSIONS):
-                logging.warning(f"Background image extension not allowed: {background_image_file.filename}")
-                return {'message': 'Background image file type not allowed'}, 400
-            bg_image_filename = secure_filename(background_image_file.filename)
-            unique_bg_image_filename = f"{uuid.uuid4()}_{bg_image_filename}"
-            background_image_filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_bg_image_filename)
-            try:
+            # Extract and validate other parameters
+            waveform_style = request.form.get('waveformStyle')
+            waveform_color = request.form.get('waveformColor')
+            background_color_hex = request.form.get('backgroundColor')
+            background_opacity_str = request.form.get('backgroundOpacity')
+            playback_speed_str = request.form.get('playbackSpeed')
+            text_overlay = request.form.get('textOverlay', '')
+            audio_output_format = request.form.get('downloadFormat', 'mp3').lower() 
+
+            # Basic validation for other fields
+            if waveform_style not in ['bars', 'lines', 'circles', 'frequency-bars', 'smooth-lines']:
+                logging.warning(f"Invalid waveform style: {waveform_style}")
+                return {'message': 'Invalid waveform style'}, 400
+            if not validate_color(waveform_color):
+                logging.warning(f"Invalid waveform color: {waveform_color}")
+                return {'message': 'Invalid waveform color format'}, 400
+            if not validate_color(background_color_hex):
+                logging.warning(f"Invalid background color: {background_color_hex}")
+                return {'message': 'Invalid background color format'}, 400
+            if not validate_float_range(background_opacity_str, 0.0, 1.0):
+                logging.warning(f"Invalid background opacity: {background_opacity_str}")
+                return {'message': 'Invalid background opacity value (must be between 0 and 1)'}, 400
+            if not validate_float_range(playback_speed_str, 0.1, 5.0): # Assuming reasonable speed range
+                logging.warning(f"Invalid playback speed: {playback_speed_str}")
+                return {'message': 'Invalid playback speed value'}, 400
+            if audio_output_format not in ['webm', 'wav', 'mp3', 'aac']: # Added aac as a common video audio codec
+                logging.warning(f"Invalid audio output format for video: {audio_output_format}")
+                return {'message': 'Invalid audio output format for video'}, 400
+
+            background_opacity = float(background_opacity_str)
+            playback_speed = float(playback_speed_str)
+
+            # Handle background image
+            background_image_file = request.files.get('backgroundImage')
+            background_image_filepath = None
+            if background_image_file and background_image_file.filename != '':
+                if not allowed_file(background_image_file.filename, ALLOWED_IMAGE_EXTENSIONS):
+                    logging.warning(f"Background image extension not allowed: {background_image_file.filename}")
+                    return {'message': 'Background image file type not allowed'}, 400
+                bg_image_filename = secure_filename(background_image_file.filename)
+                unique_bg_image_filename = f"{uuid.uuid4()}_{bg_image_filename}"
+                background_image_filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_bg_image_filename)
                 background_image_file.save(background_image_filepath)
                 logging.info(f"Background image saved to: {background_image_filepath}")
-            except Exception as e:
-                logging.error(f"Failed to save background image: {e}")
-                return {'message': f'Failed to save background image: {str(e)}'}, 500
 
-        output_video_filename = f"waveform_video_{uuid.uuid4()}.mp4" # Always output MP4 video
-        output_video_filepath = os.path.join(app.config['GENERATED_FILES_FOLDER'], output_video_filename)
+            output_video_filename = f"waveform_video_{uuid.uuid4()}.mp4" # Always output MP4 video
+            output_video_filepath = os.path.join(app.config['GENERATED_FILES_FOLDER'], output_video_filename)
 
-        temp_frames_dir = os.path.join(app.config['TEMP_FRAMES_FOLDER'], str(uuid.uuid4()))
-        os.makedirs(temp_frames_dir, exist_ok=True)
+            temp_frames_dir = os.path.join(app.config['TEMP_FRAMES_FOLDER'], str(uuid.uuid4()))
+            os.makedirs(temp_frames_dir, exist_ok=True)
 
-        try:
-            # 1. Load the audio clip
-            audio_clip = AudioFileClip(audio_filepath)
+            # 1. Load the merged audio clip using MoviePy
+            audio_clip = AudioFileClip(temp_audio_filepath)
             
-            # Apply playback speed to audio clip
-            if playback_speed != 1.0:
-                audio_clip = audio_clip.speedx(playback_speed)
+            # Apply playback speed to audio clip (already applied to pydub segment, but good to keep consistency)
+            # MoviePy's speedx might re-encode, so it's better to do it once with pydub
+            # audio_clip = audio_clip.speedx(playback_speed) # Removed as speed is handled by pydub now
 
             # Define video dimensions and FPS
             video_width, video_height = 1280, 720 
             video_fps = 24 # Standard video FPS
 
-            # 2. Generate waveform frames
+            # 2. Generate waveform frames from the *merged* audio
             waveform_frame_paths = generate_waveform_frames(
-                audio_filepath, audio_clip.duration, video_fps, 
+                temp_audio_filepath, audio_clip.duration, video_fps, 
                 video_width, video_height, waveform_style, waveform_color, temp_frames_dir
             )
             waveform_clip = ImageSequenceClip(waveform_frame_paths, fps=video_fps)
 
             # 3. Create the background video clip
             if background_image_filepath:
-                background_clip = ImageClip(background_image_filepath).set_duration(audio_clip.duration)
-                background_clip = background_clip.resize(newsize=(video_width, video_height)) 
+                background_clip = ImageClip(background_image_filepath).with_duration(audio_clip.duration)
+                background_clip = background_clip.resized((video_width, video_height)) 
             else:
                 rgb_color = hex_to_rgb(background_color_hex)
                 background_clip = ColorClip(size=(video_width, video_height), 
                                             color=rgb_color, 
                                             duration=audio_clip.duration)
                 # For opacity, MoviePy handles it when compositing if the top layer has alpha.
-                # If background_clip itself needs opacity, it would be done via compositing with a transparent layer.
+                # If background_clip itself needs opacity, it would be done via compositing with another video.
                 # For a solid color background, opacity is less relevant unless compositing with another video.
 
             # 4. Create the text overlay clip
+            all_clips = [background_clip, waveform_clip]
             if text_overlay:
                 text_clip = TextClip(text_overlay, 
                                      fontsize=50, 
@@ -281,16 +326,15 @@ class PodcastGenerate(Resource):
                                      stroke_color='black',
                                      stroke_width=1,
                                      bg_color='transparent')
-                text_clip = text_clip.set_position(('center', 0.05), relative=True).set_duration(audio_clip.duration)
+                # Updated syntax for moviepy 2.2.1
+                text_clip = text_clip.with_position(('center', 0.05)).with_duration(audio_clip.duration)
+                all_clips.append(text_clip)
                 
-                # Composite background, waveform, and text
-                final_video_clip = CompositeVideoClip([background_clip, waveform_clip, text_clip], size=(video_width, video_height))
-            else:
-                # Composite background and waveform
-                final_video_clip = CompositeVideoClip([background_clip, waveform_clip], size=(video_width, video_height))
+            # Composite all clips
+            final_video_clip = CompositeVideoClip(all_clips, size=(video_width, video_height))
 
             # 5. Set the audio of the final video clip
-            final_video_clip = final_video_clip.set_audio(audio_clip)
+            final_video_clip = final_video_clip.with_audio(audio_clip)
 
             # 6. Write the final video file
             # Use 'libx264' for video codec and 'aac' for audio codec for MP4
@@ -305,7 +349,8 @@ class PodcastGenerate(Resource):
             video_url = f"/api/v2/podcast/download/{os.path.basename(output_video_filepath)}"
             logging.info(f"Generated video download URL: {video_url}")
 
-            return jsonify({'message': 'Video generated successfully', 'video_url': video_url}), 200
+            # Updated return statement as per user's request
+            return {'message': 'Video generated successfully', 'video_url': video_url}, 200
 
         except Exception as e:
             logging.error(f"Error during video generation: {e}", exc_info=True)
@@ -317,14 +362,16 @@ class PodcastGenerate(Resource):
             return {'message': error_message}, 500
         finally:
             # Clean up uploaded files and temporary frames
-            if os.path.exists(audio_filepath):
-                os.remove(audio_filepath)
-                logging.info(f"Cleaned up uploaded audio: {audio_filepath}")
-            if background_image_filepath and os.path.exists(background_image_filepath):
-                os.remove(background_image_filepath)
-                logging.info(f"Cleaned up uploaded background image: {background_image_filepath}")
+            if uploaded_audio_path and os.path.exists(uploaded_audio_path):
+                os.remove(uploaded_audio_path)
+                logging.info(f"Cleaned up uploaded audio: {uploaded_audio_path}")
+            if recorded_audio_path and os.path.exists(recorded_audio_path):
+                os.remove(recorded_audio_path)
+                logging.info(f"Cleaned up recorded audio: {recorded_audio_path}")
+            if temp_audio_filepath and os.path.exists(temp_audio_filepath):
+                os.remove(temp_audio_filepath)
+                logging.info(f"Cleaned up temporary merged audio: {temp_audio_filepath}")
             if os.path.exists(temp_frames_dir):
-                import shutil
                 shutil.rmtree(temp_frames_dir)
                 logging.info(f"Cleaned up temporary frames directory: {temp_frames_dir}")
 

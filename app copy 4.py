@@ -14,10 +14,6 @@ import logging
 import numpy as np
 from PIL import Image, ImageDraw
 import shutil # For cleaning up temp directories
-import matplotlib
-matplotlib.use('Agg') # Use 'Agg' backend for non-interactive plotting (important for server environments)
-import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -73,8 +69,9 @@ def hex_to_rgb(hex_color):
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
 def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, video_height, waveform_style, waveform_color_hex, temp_dir):
-    """Generates a sequence of waveform image frames using Matplotlib."""
+    """Generates a sequence of waveform image frames."""
     logging.info(f"Generating waveform frames for {audio_filepath} with style {waveform_style}")
+    waveform_color_rgb = hex_to_rgb(waveform_color_hex)
     
     try:
         audio = AudioSegment.from_file(audio_filepath)
@@ -90,10 +87,6 @@ def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, v
         num_frames = int(video_duration * fps)
 
         frame_paths = []
-        # Use global max amplitude for consistent scaling across all frames
-        global_max_amplitude = np.max(np.abs(audio_data))
-        if global_max_amplitude == 0: global_max_amplitude = 1 # Avoid division by zero
-
         for i in range(num_frames):
             start_sample = i * samples_per_frame
             end_sample = start_sample + samples_per_frame
@@ -101,62 +94,76 @@ def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, v
             # Ensure we don't go out of bounds for the current frame's audio data
             current_frame_audio_data = audio_data[start_sample:min(end_sample, total_samples)]
             
-            # Create a new matplotlib figure for each frame
-            fig, ax = plt.subplots(figsize=(video_width / 100, video_height / 100), dpi=100) # Adjust figsize based on desired output resolution
-            
-            # Set background to transparent
-            fig.patch.set_alpha(0.0)
-            ax.patch.set_alpha(0.0)
+            # Create a blank image for the frame
+            img = Image.new('RGBA', (video_width, video_height), (0, 0, 0, 0)) # Transparent background
+            draw = ImageDraw.Draw(img)
 
-            # Remove axes, ticks, labels, and padding
-            ax.set_axis_off()
-            ax.margins(0,0)
-            ax.set_frame_on(False)
-            ax.set_xlim(0, video_width / 100) # Set x-limits to match figsize units
-            ax.set_ylim(-video_height / 200, video_height / 200) # Set y-limits to center waveform
-
+            # Draw waveform based on style
             if len(current_frame_audio_data) > 0:
-                # Normalize amplitude to a suitable range for plotting (e.g., -1 to 1 or 0 to 1)
-                normalized_amplitudes_plot = current_frame_audio_data / global_max_amplitude
+                # Use global max amplitude for consistent scaling across all frames
+                # This prevents "jumping" in waveform size if a frame has very low local amplitude
+                global_max_amplitude = np.max(np.abs(audio_data))
+                if global_max_amplitude == 0: global_max_amplitude = 1 # Avoid division by zero
+
+                # Normalize amplitude to canvas height based on global max
+                normalized_amplitudes = (np.abs(current_frame_audio_data) / global_max_amplitude) * (video_height / 2)
 
                 if waveform_style == 'bars' or waveform_style == 'frequency-bars':
-                    # For bars, we can use a simplified representation of frequency or just amplitude bars
-                    # Let's use amplitude bars for simplicity and visual appeal
-                    num_bars = 100 # Number of bars to display
-                    bar_indices = np.linspace(0, len(normalized_amplitudes_plot) - 1, num_bars, dtype=int)
-                    bar_heights = normalized_amplitudes_plot[bar_indices]
+                    bar_width = max(1, video_width // 100) # Adjust bar width dynamically
+                    num_bars = video_width // num_bars
+                    step = max(1, len(normalized_amplitudes) // num_bars)
                     
-                    x_positions = np.linspace(0, video_width / 100, num_bars)
-                    ax.bar(x_positions, bar_heights * (video_height / 200), width=(video_width / 100) / num_bars * 0.8, 
-                           color=waveform_color_hex, align='center', bottom=0)
-                    ax.bar(x_positions, bar_heights * (-video_height / 200), width=(video_width / 100) / num_bars * 0.8, 
-                           color=waveform_color_hex, align='center', bottom=0) # Mirror for centered effect
-
+                    for j in range(num_bars):
+                        if j * step < len(normalized_amplitudes):
+                            height_val = normalized_amplitudes[j * step]
+                            # Draw bars from center
+                            draw.rectangle([j * bar_width, video_height / 2 - height_val, 
+                                            (j + 1) * bar_width, video_height / 2 + height_val], 
+                                           fill=waveform_color_rgb)
                 elif waveform_style == 'lines' or waveform_style == 'smooth-lines':
-                    x_positions = np.linspace(0, video_width / 100, len(normalized_amplitudes_plot))
-                    ax.plot(x_positions, normalized_amplitudes_plot * (video_height / 200), 
-                            color=waveform_color_hex, linewidth=2)
-                elif waveform_style == 'circles':
-                    # Represent as a pulsating circle based on RMS amplitude
-                    rms_amplitude = np.sqrt(np.mean(normalized_amplitudes_plot**2))
-                    max_radius = min(video_width, video_height) / 400 # Max radius relative to video size
-                    current_radius = rms_amplitude * max_radius
+                    points = []
+                    # Draw both top and bottom halves for a centered line waveform
+                    for j, amp in enumerate(normalized_amplitudes):
+                        x = (j / len(normalized_amplitudes)) * video_width
+                        y_top = video_height / 2 - amp 
+                        y_bottom = video_height / 2 + amp
+                        points.append((x, y_top))
+                        # For a continuous line, we might need to add points for the bottom half as well
+                        # Or draw two separate lines for top and bottom. Let's simplify for now.
                     
-                    circle = Circle((video_width / 200, video_height / 200), current_radius, 
-                                    color=waveform_color_hex, fill=False, linewidth=3)
-                    ax.add_patch(circle)
-                    ax.set_xlim(0, video_width / 100)
-                    ax.set_ylim(0, video_height / 100)
-                    ax.set_aspect('equal', adjustable='box') # Ensure circle is round
+                    # For a single line, connect the top points. For a filled area, need more complex path.
+                    # For simplicity, drawing a single line based on positive amplitudes centered.
+                    line_points = []
+                    for j, amp in enumerate(normalized_amplitudes):
+                        x = (j / len(normalized_amplitudes)) * video_width
+                        y = video_height / 2 - amp # Draw from center, upwards for positive
+                        line_points.append((x, y))
+
+                    if len(line_points) > 1:
+                        draw.line(line_points, fill=waveform_color_rgb, width=2)
+                elif waveform_style == 'circles':
+                    # Simplified circle: radius based on average amplitude
+                    avg_amplitude = np.mean(normalized_amplitudes) if len(normalized_amplitudes) > 0 else 0
+                    radius = avg_amplitude * 0.5 # Scale down for aesthetics
+                    center_x, center_y = video_width / 2, video_height / 2
+                    if radius > 0:
+                        # Ensure radius is not too large
+                        radius = min(radius, min(video_width, video_height) / 2 - 10) 
+                        draw.ellipse([center_x - radius, center_y - radius,
+                                      center_x + radius, center_y + radius],
+                                     outline=waveform_color_rgb, width=2)
                 else:
-                    # Default to lines if style is unknown
-                    x_positions = np.linspace(0, video_width / 100, len(normalized_amplitudes_plot))
-                    ax.plot(x_positions, normalized_amplitudes_plot * (video_height / 200), 
-                            color=waveform_color_hex, linewidth=2)
+                    # Fallback for unsupported or complex styles to a simple line
+                    points = []
+                    for j, amp in enumerate(normalized_amplitudes):
+                        x = (j / len(normalized_amplitudes)) * video_width
+                        y = video_height / 2 - amp
+                        points.append((x, y))
+                    if len(points) > 1:
+                        draw.line(points, fill=waveform_color_rgb, width=2)
 
             frame_path = os.path.join(temp_dir, f"frame_{i:05d}.png")
-            plt.savefig(frame_path, transparent=True, bbox_inches='tight', pad_inches=0)
-            plt.close(fig) # Close the figure to free memory
+            img.save(frame_path)
             frame_paths.append(frame_path)
         
         logging.info(f"Generated {len(frame_paths)} waveform frames.")

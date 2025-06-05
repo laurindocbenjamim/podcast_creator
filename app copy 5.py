@@ -37,15 +37,9 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['GENERATED_FILES_FOLDER'] = GENERATED_FILES_FOLDER
 app.config['TEMP_FRAMES_FOLDER'] = TEMP_FRAMES_FOLDER
 
-# Define constants for audio processing
-BACKGROUND_AUDIO_VOLUME_DB = -20 # A negative value means quieter. -20 dB should make it significantly lower.
-WAVEFORM_AMPLITUDE_MULTIPLIER = 1.5 # Increase this value to make the waveform peaks higher.
-
-# Constants for recorded voice processing (equalization and noise removal)
-# These values are examples and can be adjusted based on desired audio characteristics.
-RECORDED_VOICE_HIGH_PASS_FREQ_HZ = 100 # Cut frequencies below this (e.g., to remove hum/muddiness)
-RECORDED_VOICE_LOW_PASS_FREQ_HZ = 8000  # Cut frequencies above this (e.g., to reduce hiss/harshness)
-RECORDED_VOICE_GAIN_DB = 3              # Apply a slight gain to the voice for presence
+# Define a constant for background audio volume (in dB)
+# A negative value means quieter. -10 dB is a good starting point for background music under speech.
+BACKGROUND_AUDIO_VOLUME_DB = -10
 
 # Create necessary directories if they don't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -77,32 +71,6 @@ def hex_to_rgb(hex_color):
     """Converts a hex color string to an RGB tuple."""
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-
-def equalize_and_denoise_recorded_voice(audio_segment):
-    """
-    Applies basic equalization and noise reduction (filtering) to an AudioSegment.
-    This is a simplified approach using pydub's built-in filters.
-    For advanced noise reduction, dedicated libraries like 'noisereduce' might be needed.
-    """
-    logging.info("Applying equalization and noise reduction to recorded voice.")
-    processed_audio = audio_segment
-
-    # Apply high-pass filter for noise reduction (e.g., remove hum/rumble)
-    if RECORDED_VOICE_HIGH_PASS_FREQ_HZ > 0:
-        processed_audio = processed_audio.high_pass_filter(RECORDED_VOICE_HIGH_PASS_FREQ_HZ)
-        logging.info(f"Applied high-pass filter at {RECORDED_VOICE_HIGH_PASS_FREQ_HZ} Hz.")
-
-    # Apply low-pass filter for noise reduction (e.g., reduce hiss/harshness)
-    if RECORDED_VOICE_LOW_PASS_FREQ_HZ > 0:
-        processed_audio = processed_audio.low_pass_filter(RECORDED_VOICE_LOW_PASS_FREQ_HZ)
-        logging.info(f"Applied low-pass filter at {RECORDED_VOICE_LOW_PASS_FREQ_HZ} Hz.")
-
-    # Apply overall gain for equalization/presence
-    if RECORDED_VOICE_GAIN_DB != 0:
-        processed_audio = processed_audio.apply_gain(RECORDED_VOICE_GAIN_DB)
-        logging.info(f"Applied {RECORDED_VOICE_GAIN_DB} dB gain.")
-
-    return processed_audio
 
 def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, video_height, waveform_style, waveform_color_hex, temp_dir):
     """Generates a sequence of waveform image frames using Matplotlib."""
@@ -159,20 +127,20 @@ def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, v
                     bar_heights = normalized_amplitudes_plot[bar_indices]
                     
                     x_positions = np.linspace(0, video_width / 100, num_bars)
-                    ax.bar(x_positions, bar_heights * (video_height / 200) * WAVEFORM_AMPLITUDE_MULTIPLIER, width=(video_width / 100) / num_bars * 0.8, 
+                    ax.bar(x_positions, bar_heights * (video_height / 200), width=(video_width / 100) / num_bars * 0.8, 
                            color=waveform_color_hex, align='center', bottom=0)
-                    ax.bar(x_positions, bar_heights * (-video_height / 200) * WAVEFORM_AMPLITUDE_MULTIPLIER, width=(video_width / 100) / num_bars * 0.8, 
+                    ax.bar(x_positions, bar_heights * (-video_height / 200), width=(video_width / 100) / num_bars * 0.8, 
                            color=waveform_color_hex, align='center', bottom=0) # Mirror for centered effect
 
                 elif waveform_style == 'lines' or waveform_style == 'smooth-lines':
                     x_positions = np.linspace(0, video_width / 100, len(normalized_amplitudes_plot))
-                    ax.plot(x_positions, normalized_amplitudes_plot * (video_height / 200) * WAVEFORM_AMPLITUDE_MULTIPLIER, 
+                    ax.plot(x_positions, normalized_amplitudes_plot * (video_height / 200), 
                             color=waveform_color_hex, linewidth=2)
                 elif waveform_style == 'circles':
                     # Represent as a pulsating circle based on RMS amplitude
                     rms_amplitude = np.sqrt(np.mean(normalized_amplitudes_plot**2))
                     max_radius = min(video_width, video_height) / 400 # Max radius relative to video size
-                    current_radius = rms_amplitude * max_radius * WAVEFORM_AMPLITUDE_MULTIPLIER
+                    current_radius = rms_amplitude * max_radius
                     
                     circle = Circle((video_width / 200, video_height / 200), current_radius, 
                                     color=waveform_color_hex, fill=False, linewidth=3)
@@ -183,7 +151,7 @@ def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, v
                 else:
                     # Default to lines if style is unknown
                     x_positions = np.linspace(0, video_width / 100, len(normalized_amplitudes_plot))
-                    ax.plot(x_positions, normalized_amplitudes_plot * (video_height / 200) * WAVEFORM_AMPLITUDE_MULTIPLIER, 
+                    ax.plot(x_positions, normalized_amplitudes_plot * (video_height / 200), 
                             color=waveform_color_hex, linewidth=2)
 
             frame_path = os.path.join(temp_dir, f"frame_{i:05d}.png")
@@ -237,9 +205,6 @@ class PodcastGenerate(Resource):
                 logging.info(f"Recorded audio file saved to: {recorded_audio_path}")
                 
                 recorded_audio_segment = AudioSegment.from_file(recorded_audio_path)
-                
-                # Apply equalization and noise reduction to the recorded voice
-                recorded_audio_segment = equalize_and_denoise_recorded_voice(recorded_audio_segment)
 
                 if final_audio_segment: # If uploaded audio exists, overlay recorded audio
                     # Extend background audio if recorded audio is longer
@@ -350,11 +315,10 @@ class PodcastGenerate(Resource):
                 text_clip = TextClip(text_overlay, 
                                      fontsize=50, 
                                      color='white', 
-                                     # Removed 'font' argument to avoid TypeError
+                                     font='sans', # Use a generic font or specify a path to a .ttf if available
                                      stroke_color='black',
-                                     stroke_width=1
-                                     # Removed bg_color='transparent' as it causes error
-                                     )
+                                     stroke_width=1,
+                                     bg_color='transparent')
                 # Updated syntax for moviepy 2.2.1
                 text_clip = text_clip.with_position(('center', 0.05)).with_duration(audio_clip.duration)
                 all_clips.append(text_clip)

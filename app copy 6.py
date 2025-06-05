@@ -37,15 +37,13 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['GENERATED_FILES_FOLDER'] = GENERATED_FILES_FOLDER
 app.config['TEMP_FRAMES_FOLDER'] = TEMP_FRAMES_FOLDER
 
-# Define constants for audio processing
-BACKGROUND_AUDIO_VOLUME_DB = -20 # A negative value means quieter. -20 dB should make it significantly lower.
-WAVEFORM_AMPLITUDE_MULTIPLIER = 1.5 # Increase this value to make the waveform peaks higher.
+# Define a constant for background audio volume (in dB)
+# A negative value means quieter. -20 dB should make it significantly lower.
+BACKGROUND_AUDIO_VOLUME_DB = -20
 
-# Constants for recorded voice processing (equalization and noise removal)
-# These values are examples and can be adjusted based on desired audio characteristics.
-RECORDED_VOICE_HIGH_PASS_FREQ_HZ = 100 # Cut frequencies below this (e.g., to remove hum/muddiness)
-RECORDED_VOICE_LOW_PASS_FREQ_HZ = 8000  # Cut frequencies above this (e.g., to reduce hiss/harshness)
-RECORDED_VOICE_GAIN_DB = 3              # Apply a slight gain to the voice for presence
+# Define a constant to control the amplitude of the waveform visualization
+# Increase this value to make the waveform peaks higher.
+WAVEFORM_AMPLITUDE_MULTIPLIER = 1.5 
 
 # Create necessary directories if they don't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -77,32 +75,6 @@ def hex_to_rgb(hex_color):
     """Converts a hex color string to an RGB tuple."""
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-
-def equalize_and_denoise_recorded_voice(audio_segment):
-    """
-    Applies basic equalization and noise reduction (filtering) to an AudioSegment.
-    This is a simplified approach using pydub's built-in filters.
-    For advanced noise reduction, dedicated libraries like 'noisereduce' might be needed.
-    """
-    logging.info("Applying equalization and noise reduction to recorded voice.")
-    processed_audio = audio_segment
-
-    # Apply high-pass filter for noise reduction (e.g., remove hum/rumble)
-    if RECORDED_VOICE_HIGH_PASS_FREQ_HZ > 0:
-        processed_audio = processed_audio.high_pass_filter(RECORDED_VOICE_HIGH_PASS_FREQ_HZ)
-        logging.info(f"Applied high-pass filter at {RECORDED_VOICE_HIGH_PASS_FREQ_HZ} Hz.")
-
-    # Apply low-pass filter for noise reduction (e.g., reduce hiss/harshness)
-    if RECORDED_VOICE_LOW_PASS_FREQ_HZ > 0:
-        processed_audio = processed_audio.low_pass_filter(RECORDED_VOICE_LOW_PASS_FREQ_HZ)
-        logging.info(f"Applied low-pass filter at {RECORDED_VOICE_LOW_PASS_FREQ_HZ} Hz.")
-
-    # Apply overall gain for equalization/presence
-    if RECORDED_VOICE_GAIN_DB != 0:
-        processed_audio = processed_audio.apply_gain(RECORDED_VOICE_GAIN_DB)
-        logging.info(f"Applied {RECORDED_VOICE_GAIN_DB} dB gain.")
-
-    return processed_audio
 
 def generate_waveform_frames(audio_filepath, video_duration, fps, video_width, video_height, waveform_style, waveform_color_hex, temp_dir):
     """Generates a sequence of waveform image frames using Matplotlib."""
@@ -237,9 +209,6 @@ class PodcastGenerate(Resource):
                 logging.info(f"Recorded audio file saved to: {recorded_audio_path}")
                 
                 recorded_audio_segment = AudioSegment.from_file(recorded_audio_path)
-                
-                # Apply equalization and noise reduction to the recorded voice
-                recorded_audio_segment = equalize_and_denoise_recorded_voice(recorded_audio_segment)
 
                 if final_audio_segment: # If uploaded audio exists, overlay recorded audio
                     # Extend background audio if recorded audio is longer
